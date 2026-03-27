@@ -240,8 +240,11 @@ def compute_cache_aware_report_from_simulation(
     max_nodes: int,
     seed: int | None = None,
     span_stat: str = "p99",
+    unobserved_policy: str = "zero-span",
 ) -> tuple[pd.DataFrame, np.ndarray]:
     validate_cluster_sizes(real_nodes=real_nodes, max_nodes=max_nodes)
+    if unobserved_policy not in {"zero-span", "min-one"}:
+        raise ValueError("unobserved_policy must be either 'zero-span' or 'min-one'")
 
     stat_values, horizon = compute_simulation_timeline_stat(
         simulation_df=simulation_df,
@@ -253,10 +256,12 @@ def compute_cache_aware_report_from_simulation(
     report_df["timeline_horizon"] = horizon
     report_df["timeline_stat"] = span_stat
     report_df["timeline_stat_value"] = stat_values
+    observed_spans = np.clip(np.ceil(np.maximum(stat_values, 1.0)), 1, max_nodes)
+    missing_span = 0 if unobserved_policy == "zero-span" else 1
     report_df["node_span"] = np.where(
         stat_values > 0.0,
-        np.clip(np.ceil(stat_values), 1, max_nodes),
-        0,
+        observed_spans,
+        missing_span,
     ).astype(np.int64)
 
     return finalize_cache_aware_report(
@@ -277,6 +282,7 @@ def reduce_trace_cache_aware(
     seed: int | None = None,
     simulation_df: pd.DataFrame | None = None,
     span_stat: str = "max",
+    unobserved_policy: str = "zero-span",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray]:
     if simulation_df is None:
         report_df, real_node_ids = compute_cache_aware_report(
@@ -294,6 +300,7 @@ def reduce_trace_cache_aware(
             max_nodes=max_nodes,
             seed=seed,
             span_stat=span_stat,
+            unobserved_policy=unobserved_policy,
         )
 
     thinning_seed = None if seed is None else seed + 1

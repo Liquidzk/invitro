@@ -76,6 +76,7 @@ def run_reduce(args: argparse.Namespace) -> None:
         seed=args.seed,
         simulation_df=simulation_df,
         span_stat=args.ca_span_stat,
+        unobserved_policy=args.ca_unobserved_policy,
     )
     reduced_inv_df.to_csv(output_dir / "invocations.csv", index=False)
     reduced_mem_df.to_csv(output_dir / "memory.csv", index=False)
@@ -143,6 +144,7 @@ def append_cache_aware_row(
     max_nodes: int,
     seed: int,
     span_stat: str,
+    unobserved_policy: str,
 ) -> None:
     reduced_inv_df, _, _, report_df, _ = reduce_trace_cache_aware(
         inv_df=inv_df,
@@ -153,6 +155,7 @@ def append_cache_aware_row(
         seed=seed,
         simulation_df=simulation_df,
         span_stat=span_stat,
+        unobserved_policy=unobserved_policy,
     )
     rows.append(
         {
@@ -239,6 +242,7 @@ def run_sweep(args: argparse.Namespace) -> None:
                 max_nodes=args.max_nodes,
                 seed=seed,
                 span_stat=args.ca_span_stat,
+                unobserved_policy=args.ca_unobserved_policy,
             )
         if (seed - args.seed_start) % args.progress_every == 0:
             log.info("Completed seed %d", seed)
@@ -266,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     reduce_parser.add_argument("--policy", required=False, default="round-robin", choices=["round-robin", "cache-aware"], help="Reduction policy")
     reduce_parser.add_argument("--ca-trace-csv", required=False, metavar="path", help="Optional timestamp,function,cpu CSV used to derive cache-aware spans")
     reduce_parser.add_argument("--ca-span-stat", required=False, default="max", choices=["max", "p99"], help="Statistic used to derive cache-aware node spans")
+    reduce_parser.add_argument("--ca-unobserved-policy", required=False, default="zero-span", choices=["zero-span", "min-one"], help="How to treat functions missing from the external simulation trace")
 
     sweep_parser = subparsers.add_parser("sweep", help="Run the same reduction for many seeds and write summary CSVs.")
     sweep_parser.add_argument("-t", "--source-trace", required=True, metavar="path", help="Path to the input trace directory")
@@ -279,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--policy", required=False, default="both", choices=["round-robin", "cache-aware", "both"], help="Which policies to include in the sweep")
     sweep_parser.add_argument("--ca-trace-csv", required=False, metavar="path", help="Optional timestamp,function,cpu CSV used to derive cache-aware spans")
     sweep_parser.add_argument("--ca-span-stat", required=False, default="max", choices=["max", "p99"], help="Statistic used to derive cache-aware node spans")
+    sweep_parser.add_argument("--ca-unobserved-policy", required=False, default="zero-span", choices=["zero-span", "min-one"], help="How to treat functions missing from the external simulation trace")
 
     return parser
 

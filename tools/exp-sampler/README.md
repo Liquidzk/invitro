@@ -27,8 +27,9 @@ python3 tools/exp-sampler/cli.py reduce \
   -max 20 \
   --seed 0 \
   --policy cache-aware \
-  --ca-trace-csv /home/liquid/invitro-related/simulate_result/cpu_400(in).csv \
-  --ca-span-stat max
+  --ca-trace-csv "/home/liquid/invitro-related/simulate_result/cpu_400(in).csv" \
+  --ca-span-stat max \
+  --ca-unobserved-policy zero-span
 ```
 
 Useful parameter patterns:
@@ -36,6 +37,8 @@ Useful parameter patterns:
 - `-real 8 -max 1000`: the nodes parameter
 - `--ca-span-stat max`: use full-timeline max from the external `cpu` trace
 - `--ca-span-stat p99`: use full-timeline p99 instead
+- `--ca-unobserved-policy zero-span`: functions missing from the external trace are dropped
+- `--ca-unobserved-policy min-one`: functions missing from the external trace are forced to `node_span=1`
 
 ## Seed Sweeps
 
@@ -51,8 +54,9 @@ python3 tools/exp-sampler/cli.py sweep \
   --seed-start 0 \
   --seed-count 300 \
   --policy both \
-  --ca-trace-csv /home/liquid/invitro-related/simulate_result/cpu_400(in).csv \
-  --ca-span-stat max
+  --ca-trace-csv "/home/liquid/invitro-related/simulate_result/cpu_400(in).csv" \
+  --ca-span-stat max \
+  --ca-unobserved-policy zero-span
 ```
 
 Each sweep writes:
@@ -84,5 +88,22 @@ python3 tools/exp-sampler/cli.py reduce \
   --seed 0 \
   --policy cache-aware \
   --ca-trace-csv "/home/liquid/invitro-related/simulate_result/cpu_400(in).csv" \
-  --ca-span-stat max
+  --ca-span-stat max \
+  --ca-unobserved-policy zero-span
 ```
+
+The old "keep unobserved functions alive with span 1" behavior is still available:
+
+```console
+python3 tools/exp-sampler/cli.py reduce \
+  -t data/traces/reference/sampled_150/400 \
+  -o data/traces/reference/sampled_150/400_ca_8of1000_min_one \
+  -real 8 \
+  -max 1000 \
+  --seed 0 \
+  --policy cache-aware \
+  --ca-trace-csv "/home/liquid/invitro-related/simulate_result/cpu_400(in).csv" \
+  --ca-span-stat max \
+  --ca-unobserved-policy min-one
+```
+Now the scale-ratio expection will be the same as RR

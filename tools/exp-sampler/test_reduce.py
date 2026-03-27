@@ -229,6 +229,37 @@ def test_compute_cache_aware_report_from_simulation_uses_function_ids():
     assert report_df["placement_factor"].tolist() == expected_factors
 
 
+def test_compute_cache_aware_report_from_simulation_min_one_for_unobserved():
+    inv_df, _, _ = create_trace_tables()
+    simulation_df = pd.DataFrame(
+        {
+            "timestamp": [0, 1, 2, 0, 1],
+            "function": [0, 0, 0, 2, 2],
+            "cpu": [0.2, 0.0, 1.8, 2.0, 2.0],
+        }
+    )
+
+    report_df, real_node_ids = compute_cache_aware_report_from_simulation(
+        inv_df=inv_df,
+        simulation_df=simulation_df,
+        real_nodes=1,
+        max_nodes=4,
+        seed=0,
+        span_stat="max",
+        unobserved_policy="min-one",
+    )
+
+    expected_spans = [2, 1, 2]
+    expected_metric_values = [1.8, 0.0, 2.0]
+    expected_factors = [0.0, 0.0, 0.5]
+
+    assert real_node_ids.tolist() == [3]
+    assert report_df["trace_function_id"].tolist() == [0, 1, 2]
+    assert report_df["timeline_stat_value"].tolist() == expected_metric_values
+    assert report_df["node_span"].tolist() == expected_spans
+    assert report_df["placement_factor"].tolist() == expected_factors
+
+
 def run_all_tests():
     test_compute_round_robin_factor()
     test_thin_invocations_round_robin_is_reproducible()
@@ -236,6 +267,7 @@ def run_all_tests():
     test_compute_cache_aware_report_is_reproducible()
     test_reduce_trace_cache_aware_filters_zero_invocation_functions()
     test_compute_cache_aware_report_from_simulation_uses_function_ids()
+    test_compute_cache_aware_report_from_simulation_min_one_for_unobserved()
 
 
 if __name__ == "__main__":
