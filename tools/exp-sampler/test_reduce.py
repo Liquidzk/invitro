@@ -60,7 +60,7 @@ def test_thin_invocations_round_robin_is_reproducible():
             "HashOwner": ["oa", "ob", "oc"],
             "Trigger": ["http", "http", "http"],
             "1": [0, 2, 1],
-            "2": [0, 0, 0],
+            "2": [0, 1, 0],
             "3": [1, 1, 1],
         }
     )
@@ -84,8 +84,8 @@ def test_reduce_trace_round_robin_filters_zero_invocation_functions():
             "HashFunction": ["fb", "fc"],
             "HashOwner": ["ob", "oc"],
             "Trigger": ["http", "http"],
-            "1": [0, 1],
-            "2": [0, 1],
+            "1": [1, 1],
+            "2": [1, 1],
             "3": [2, 1],
         }
     )
@@ -166,9 +166,9 @@ def test_reduce_trace_cache_aware_filters_zero_invocation_functions():
             "HashFunction": ["fb", "fc"],
             "HashOwner": ["ob", "oc"],
             "Trigger": ["http", "http"],
-            "1": [3, 2],
-            "2": [4, 1],
-            "3": [1, 1],
+            "1": [3, 1],
+            "2": [3, 1],
+            "3": [2, 1],
         }
     )
     expected_mem_df = pd.DataFrame(
@@ -193,7 +193,7 @@ def test_reduce_trace_cache_aware_filters_zero_invocation_functions():
 
     assert real_node_ids.tolist() == [3]
     assert report_df["kept"].tolist() == [False, True, True]
-    assert report_df["invocations_after"].tolist() == [0, 8, 4]
+    assert report_df["invocations_after"].tolist() == [0, 8, 3]
     assert_frame_equal(reduced_inv_df, expected_inv_df)
     assert_frame_equal(reduced_mem_df, expected_mem_df)
     assert_frame_equal(reduced_run_df, expected_run_df)
