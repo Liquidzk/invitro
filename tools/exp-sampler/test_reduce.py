@@ -2,8 +2,12 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 
 from reduce import (
+    build_cold_exec_reference,
     compute_cache_aware_report,
     compute_cache_aware_report_from_simulation,
+    compute_cold_exec_wasserstein_distance,
+    compute_average_interarrival_minutes,
+    compute_cold_function_mask,
     compute_round_robin_factor,
     reduce_trace_cache_aware,
     reduce_trace_round_robin,
@@ -47,6 +51,59 @@ def create_trace_tables():
 
 def test_compute_round_robin_factor():
     assert compute_round_robin_factor(real_nodes=4, max_nodes=16) == 0.25
+
+
+def test_compute_average_interarrival_minutes():
+    inv_df, _, _ = create_trace_tables()
+    avg_iat = compute_average_interarrival_minutes(inv_df)
+    assert avg_iat.tolist() == [2.0, 2.0 / 14.0, 2.0 / 5.0]
+
+
+def test_compute_cold_function_mask():
+    inv_df, _, _ = create_trace_tables()
+    cold_mask = compute_cold_function_mask(inv_df=inv_df, gap_threshold_minutes=1.0)
+    assert cold_mask.tolist() == [True, False, False]
+
+
+def test_build_cold_exec_reference_and_wasserstein():
+    inv_df, _, run_df = create_trace_tables()
+    cold_hashes, cold_exec_times = build_cold_exec_reference(
+        inv_df=inv_df,
+        run_df=run_df,
+        gap_threshold_minutes=1.0,
+        exec_time_column="Average",
+    )
+
+    assert cold_hashes.tolist() == ["fa"]
+    assert cold_exec_times.tolist() == [10.0]
+
+    retained_cold_functions, cold_exec_wd = compute_cold_exec_wasserstein_distance(
+        reduced_run_df=run_df[run_df["HashFunction"].isin(["fa", "fb"])].reset_index(drop=True),
+        cold_hashes=cold_hashes,
+        original_cold_exec_times=cold_exec_times,
+        exec_time_column="Average",
+    )
+    assert retained_cold_functions == 1
+    assert cold_exec_wd == 0.0
+
+
+def test_compute_cold_exec_wasserstein_distance_is_infinite_when_no_cold_functions_remain():
+    inv_df, _, run_df = create_trace_tables()
+    cold_hashes, cold_exec_times = build_cold_exec_reference(
+        inv_df=inv_df,
+        run_df=run_df,
+        gap_threshold_minutes=1.0,
+        exec_time_column="Average",
+    )
+
+    retained_cold_functions, cold_exec_wd = compute_cold_exec_wasserstein_distance(
+        reduced_run_df=run_df[run_df["HashFunction"].isin(["fb", "fc"])].reset_index(drop=True),
+        cold_hashes=cold_hashes,
+        original_cold_exec_times=cold_exec_times,
+        exec_time_column="Average",
+    )
+    assert retained_cold_functions == 0
+    assert cold_exec_wd == float("inf")
 
 
 def test_thin_invocations_round_robin_is_reproducible():
@@ -262,6 +319,10 @@ def test_compute_cache_aware_report_from_simulation_min_one_for_unobserved():
 
 def run_all_tests():
     test_compute_round_robin_factor()
+    test_compute_average_interarrival_minutes()
+    test_compute_cold_function_mask()
+    test_build_cold_exec_reference_and_wasserstein()
+    test_compute_cold_exec_wasserstein_distance_is_infinite_when_no_cold_functions_remain()
     test_thin_invocations_round_robin_is_reproducible()
     test_reduce_trace_round_robin_filters_zero_invocation_functions()
     test_compute_cache_aware_report_is_reproducible()

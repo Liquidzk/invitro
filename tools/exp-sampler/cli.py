@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 
 from reduce import (
+    build_cold_exec_reference,
+    compute_cold_exec_wasserstein_distance,
     get_invocation_columns,
     reduce_trace_cache_aware,
     reduce_trace_round_robin,
@@ -31,10 +33,46 @@ def ensure_output_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def write_reduced_trace(
+    output_dir: Path,
+    reduced_inv_df: pd.DataFrame,
+    reduced_mem_df: pd.DataFrame,
+    reduced_run_df: pd.DataFrame,
+    report_df: pd.DataFrame | None = None,
+    real_node_ids: np.ndarray | None = None,
+) -> None:
+    ensure_output_dir(output_dir)
+    reduced_inv_df.to_csv(output_dir / "invocations.csv", index=False)
+    reduced_mem_df.to_csv(output_dir / "memory.csv", index=False)
+    reduced_run_df.to_csv(output_dir / "durations.csv", index=False)
+    if report_df is not None:
+        report_df.to_csv(output_dir / "reduction_report.csv", index=False)
+    if real_node_ids is not None:
+        pd.DataFrame({"node_id": real_node_ids}).to_csv(output_dir / "real_nodes.csv", index=False)
+
+
+def compute_cold_metrics(
+    reduced_run_df: pd.DataFrame,
+    cold_hashes: np.ndarray,
+    original_cold_exec_times: np.ndarray,
+    exec_time_column: str,
+) -> dict[str, float | int]:
+    cold_functions_after, cold_exec_wd = compute_cold_exec_wasserstein_distance(
+        reduced_run_df=reduced_run_df,
+        cold_hashes=cold_hashes,
+        original_cold_exec_times=original_cold_exec_times,
+        exec_time_column=exec_time_column,
+    )
+    return {
+        "cold_functions_before": int(len(cold_hashes)),
+        "cold_functions_after": int(cold_functions_after),
+        "cold_exec_wd": float(cold_exec_wd),
+    }
+
+
 def run_reduce(args: argparse.Namespace) -> None:
     trace_dir = Path(args.source_trace)
     output_dir = Path(args.output)
-    ensure_output_dir(output_dir)
 
     inv_df, mem_df, run_df = load_trace(trace_dir)
     invocation_columns = get_invocation_columns(inv_df)
@@ -49,9 +87,12 @@ def run_reduce(args: argparse.Namespace) -> None:
             max_nodes=args.max_nodes,
             seed=args.seed,
         )
-        reduced_inv_df.to_csv(output_dir / "invocations.csv", index=False)
-        reduced_mem_df.to_csv(output_dir / "memory.csv", index=False)
-        reduced_run_df.to_csv(output_dir / "durations.csv", index=False)
+        write_reduced_trace(
+            output_dir=output_dir,
+            reduced_inv_df=reduced_inv_df,
+            reduced_mem_df=reduced_mem_df,
+            reduced_run_df=reduced_run_df,
+        )
 
         total_after = int(reduced_inv_df[invocation_columns].to_numpy().sum()) if len(reduced_inv_df) > 0 else 0
         log.info(
@@ -78,11 +119,14 @@ def run_reduce(args: argparse.Namespace) -> None:
         span_stat=args.ca_span_stat,
         unobserved_policy=args.ca_unobserved_policy,
     )
-    reduced_inv_df.to_csv(output_dir / "invocations.csv", index=False)
-    reduced_mem_df.to_csv(output_dir / "memory.csv", index=False)
-    reduced_run_df.to_csv(output_dir / "durations.csv", index=False)
-    report_df.to_csv(output_dir / "reduction_report.csv", index=False)
-    pd.DataFrame({"node_id": real_node_ids}).to_csv(output_dir / "real_nodes.csv", index=False)
+    write_reduced_trace(
+        output_dir=output_dir,
+        reduced_inv_df=reduced_inv_df,
+        reduced_mem_df=reduced_mem_df,
+        reduced_run_df=reduced_run_df,
+        report_df=report_df,
+        real_node_ids=real_node_ids,
+    )
 
     total_after = int(reduced_inv_df[invocation_columns].to_numpy().sum()) if len(reduced_inv_df) > 0 else 0
     log.info(
@@ -107,8 +151,11 @@ def append_round_robin_row(
     real_nodes: int,
     max_nodes: int,
     seed: int,
+    cold_hashes: np.ndarray,
+    original_cold_exec_times: np.ndarray,
+    cold_exec_column: str,
 ) -> None:
-    reduced_inv_df, _, _, factor = reduce_trace_round_robin(
+    reduced_inv_df, _, reduced_run_df, factor = reduce_trace_round_robin(
         inv_df=inv_df,
         mem_df=mem_df,
         run_df=run_df,
@@ -128,6 +175,12 @@ def append_round_robin_row(
             "mean_node_span": np.nan,
             "zero_factor_functions": np.nan,
             "zero_span_functions": np.nan,
+            **compute_cold_metrics(
+                reduced_run_df=reduced_run_df,
+                cold_hashes=cold_hashes,
+                original_cold_exec_times=original_cold_exec_times,
+                exec_time_column=cold_exec_column,
+            ),
         }
     )
 
@@ -145,8 +198,11 @@ def append_cache_aware_row(
     seed: int,
     span_stat: str,
     unobserved_policy: str,
+    cold_hashes: np.ndarray,
+    original_cold_exec_times: np.ndarray,
+    cold_exec_column: str,
 ) -> None:
-    reduced_inv_df, _, _, report_df, _ = reduce_trace_cache_aware(
+    reduced_inv_df, _, reduced_run_df, report_df, _ = reduce_trace_cache_aware(
         inv_df=inv_df,
         mem_df=mem_df,
         run_df=run_df,
@@ -169,6 +225,12 @@ def append_cache_aware_row(
             "mean_node_span": float(report_df["node_span"].mean()),
             "zero_factor_functions": int((report_df["placement_factor"] == 0).sum()),
             "zero_span_functions": int((report_df["node_span"] == 0).sum()),
+            **compute_cold_metrics(
+                reduced_run_df=reduced_run_df,
+                cold_hashes=cold_hashes,
+                original_cold_exec_times=original_cold_exec_times,
+                exec_time_column=cold_exec_column,
+            ),
         }
     )
 
@@ -176,6 +238,7 @@ def append_cache_aware_row(
 def summarize_results(results: pd.DataFrame) -> pd.DataFrame:
     summary_rows: list[dict[str, float | int | str]] = []
     for policy, grp in results.groupby("policy"):
+        cold_exec_wd = grp["cold_exec_wd"].replace([np.inf, -np.inf], np.nan).dropna()
         summary_rows.append(
             {
                 "policy": policy,
@@ -199,9 +262,92 @@ def summarize_results(results: pd.DataFrame) -> pd.DataFrame:
                 "mean_node_span_mean": float(grp["mean_node_span"].mean(skipna=True)) if grp["mean_node_span"].notna().any() else np.nan,
                 "zero_factor_functions_mean": float(grp["zero_factor_functions"].mean(skipna=True)) if grp["zero_factor_functions"].notna().any() else np.nan,
                 "zero_span_functions_mean": float(grp["zero_span_functions"].mean(skipna=True)) if grp["zero_span_functions"].notna().any() else np.nan,
+                "cold_functions_before_mean": float(grp["cold_functions_before"].mean()),
+                "cold_functions_after_mean": float(grp["cold_functions_after"].mean()),
+                "cold_exec_wd_valid_count": int(len(cold_exec_wd)),
+                "cold_exec_wd_mean": float(cold_exec_wd.mean()) if len(cold_exec_wd) > 0 else np.nan,
+                "cold_exec_wd_std": float(cold_exec_wd.std(ddof=0)) if len(cold_exec_wd) > 0 else np.nan,
+                "cold_exec_wd_median": float(cold_exec_wd.median()) if len(cold_exec_wd) > 0 else np.nan,
+                "cold_exec_wd_p05": float(cold_exec_wd.quantile(0.05)) if len(cold_exec_wd) > 0 else np.nan,
+                "cold_exec_wd_p95": float(cold_exec_wd.quantile(0.95)) if len(cold_exec_wd) > 0 else np.nan,
             }
         )
     return pd.DataFrame(summary_rows)
+
+
+def select_best_results(results: pd.DataFrame) -> pd.DataFrame:
+    best_rows: list[pd.Series] = []
+    for _, grp in results.groupby("policy"):
+        eligible = grp[np.isfinite(grp["cold_exec_wd"])].copy()
+        if eligible.empty:
+            continue
+        eligible = eligible.sort_values(
+            by=["cold_exec_wd", "cold_functions_after", "seed"],
+            ascending=[True, False, True],
+        )
+        best_rows.append(eligible.iloc[0])
+    if not best_rows:
+        return pd.DataFrame()
+    return pd.DataFrame(best_rows).reset_index(drop=True)
+
+
+def materialize_best_traces(
+    best_results: pd.DataFrame,
+    best_output_dir: Path,
+    inv_df: pd.DataFrame,
+    mem_df: pd.DataFrame,
+    run_df: pd.DataFrame,
+    simulation_df: pd.DataFrame | None,
+    args: argparse.Namespace,
+) -> pd.DataFrame:
+    ensure_output_dir(best_output_dir)
+    best_rows: list[dict[str, float | int | str]] = []
+
+    for row in best_results.to_dict(orient="records"):
+        policy = str(row["policy"])
+        seed = int(row["seed"])
+        policy_output_dir = best_output_dir / policy
+
+        if policy == "round-robin":
+            reduced_inv_df, reduced_mem_df, reduced_run_df, _ = reduce_trace_round_robin(
+                inv_df=inv_df,
+                mem_df=mem_df,
+                run_df=run_df,
+                real_nodes=args.real_nodes,
+                max_nodes=args.max_nodes,
+                seed=seed,
+            )
+            write_reduced_trace(
+                output_dir=policy_output_dir,
+                reduced_inv_df=reduced_inv_df,
+                reduced_mem_df=reduced_mem_df,
+                reduced_run_df=reduced_run_df,
+            )
+        else:
+            reduced_inv_df, reduced_mem_df, reduced_run_df, report_df, real_node_ids = reduce_trace_cache_aware(
+                inv_df=inv_df,
+                mem_df=mem_df,
+                run_df=run_df,
+                real_nodes=args.real_nodes,
+                max_nodes=args.max_nodes,
+                seed=seed,
+                simulation_df=simulation_df,
+                span_stat=args.ca_span_stat,
+                unobserved_policy=args.ca_unobserved_policy,
+            )
+            write_reduced_trace(
+                output_dir=policy_output_dir,
+                reduced_inv_df=reduced_inv_df,
+                reduced_mem_df=reduced_mem_df,
+                reduced_run_df=reduced_run_df,
+                report_df=report_df,
+                real_node_ids=real_node_ids,
+            )
+
+        row["output_dir"] = str(policy_output_dir)
+        best_rows.append(row)
+
+    return pd.DataFrame(best_rows)
 
 
 def run_sweep(args: argparse.Namespace) -> None:
@@ -211,6 +357,12 @@ def run_sweep(args: argparse.Namespace) -> None:
 
     inv_df, mem_df, run_df = load_trace(trace_dir)
     simulation_df = pd.read_csv(args.ca_trace_csv) if args.ca_trace_csv is not None else None
+    cold_hashes, original_cold_exec_times = build_cold_exec_reference(
+        inv_df=inv_df,
+        run_df=run_df,
+        gap_threshold_minutes=args.cold_gap_threshold,
+        exec_time_column=args.cold_exec_column,
+    )
     invocation_columns = get_invocation_columns(inv_df)
     total_before = int(inv_df[invocation_columns].to_numpy().sum())
 
@@ -228,6 +380,9 @@ def run_sweep(args: argparse.Namespace) -> None:
                 real_nodes=args.real_nodes,
                 max_nodes=args.max_nodes,
                 seed=seed,
+                cold_hashes=cold_hashes,
+                original_cold_exec_times=original_cold_exec_times,
+                cold_exec_column=args.cold_exec_column,
             )
         if args.policy in {"cache-aware", "both"}:
             append_cache_aware_row(
@@ -243,6 +398,9 @@ def run_sweep(args: argparse.Namespace) -> None:
                 seed=seed,
                 span_stat=args.ca_span_stat,
                 unobserved_policy=args.ca_unobserved_policy,
+                cold_hashes=cold_hashes,
+                original_cold_exec_times=original_cold_exec_times,
+                cold_exec_column=args.cold_exec_column,
             )
         if (seed - args.seed_start) % args.progress_every == 0:
             log.info("Completed seed %d", seed)
@@ -255,6 +413,22 @@ def run_sweep(args: argparse.Namespace) -> None:
     summary.to_csv(summary_path, index=False)
     log.info("Wrote seed sweep results to %s", results_path)
     log.info("Wrote seed sweep summary to %s", summary_path)
+
+    if args.select_best:
+        best_results = select_best_results(results)
+        best_output_dir = Path(args.best_output_dir) if args.best_output_dir else output_dir / f"{args.name}_best"
+        best_results = materialize_best_traces(
+            best_results=best_results,
+            best_output_dir=best_output_dir,
+            inv_df=inv_df,
+            mem_df=mem_df,
+            run_df=run_df,
+            simulation_df=simulation_df,
+            args=args,
+        )
+        best_path = output_dir / f"{args.name}_best.csv"
+        best_results.to_csv(best_path, index=False)
+        log.info("Wrote best-trace selection to %s", best_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -285,6 +459,10 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--ca-trace-csv", required=False, metavar="path", help="Optional timestamp,function,cpu CSV used to derive cache-aware spans")
     sweep_parser.add_argument("--ca-span-stat", required=False, default="max", choices=["max", "p99"], help="Statistic used to derive cache-aware node spans")
     sweep_parser.add_argument("--ca-unobserved-policy", required=False, default="zero-span", choices=["zero-span", "min-one"], help="How to treat functions missing from the external simulation trace")
+    sweep_parser.add_argument("--cold-gap-threshold", required=False, type=float, default=10.0, metavar="minutes", help="Average inter-arrival threshold in minutes used to classify original-trace functions as cold")
+    sweep_parser.add_argument("--cold-exec-column", required=False, default="Average", metavar="column", help="Duration column used when comparing cold-function execution-time distributions")
+    sweep_parser.add_argument("--select-best", required=False, action="store_true", help="Materialize the best reduced trace per policy based on minimum cold_exec_wd")
+    sweep_parser.add_argument("--best-output-dir", required=False, metavar="path", help="Optional output directory for best-trace materialization. Defaults to <output-dir>/<name>_best")
 
     return parser
 

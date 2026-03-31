@@ -4,6 +4,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 
 TRACE_METADATA_COLUMNS = {"HashOwner", "HashApp", "HashFunction", "Trigger"}
@@ -24,6 +25,97 @@ def get_invocation_columns(inv_df: pd.DataFrame) -> list[str]:
     if not invocation_columns:
         raise ValueError("Invocation trace must contain at least one minute column")
     return invocation_columns
+
+
+def extract_exec_time_distribution(
+    run_df: pd.DataFrame,
+    hash_functions: np.ndarray,
+    exec_time_column: str = "Average",
+) -> np.ndarray:
+    if exec_time_column not in run_df.columns:
+        raise ValueError(f"Duration trace is missing required column: {exec_time_column}")
+    if len(hash_functions) == 0:
+        return np.array([], dtype=np.float64)
+
+    return run_df.loc[
+        run_df["HashFunction"].isin(hash_functions),
+        exec_time_column,
+    ].to_numpy(dtype=np.float64, copy=True)
+
+
+def compute_wasserstein_distance(sample_values: np.ndarray, original_values: np.ndarray) -> float:
+    # Keep the same distribution-comparison primitive as sampler/sample.py::compute_distances.
+    return float(stats.wasserstein_distance(sample_values, original_values))
+
+
+def compute_average_interarrival_minutes(inv_df: pd.DataFrame) -> np.ndarray:
+    invocation_columns = get_invocation_columns(inv_df)
+    try:
+        minute_values = np.asarray([int(column) for column in invocation_columns], dtype=np.float64)
+    except ValueError as exc:
+        raise ValueError("Invocation minute columns must be integer-like to estimate inter-arrival gaps") from exc
+
+    invocation_counts = inv_df[invocation_columns].to_numpy(dtype=np.float64, copy=False)
+    total_invocations = invocation_counts.sum(axis=1)
+    has_invocations = invocation_counts > 0
+
+    avg_interarrival = np.full(len(inv_df), np.inf, dtype=np.float64)
+    multiple_invocations = total_invocations > 1
+    if not np.any(multiple_invocations):
+        return avg_interarrival
+
+    first_idx = has_invocations.argmax(axis=1)
+    last_idx = invocation_counts.shape[1] - 1 - has_invocations[:, ::-1].argmax(axis=1)
+    avg_interarrival[multiple_invocations] = (
+        minute_values[last_idx[multiple_invocations]] - minute_values[first_idx[multiple_invocations]]
+    ) / (total_invocations[multiple_invocations] - 1.0)
+    return avg_interarrival
+
+
+def compute_cold_function_mask(inv_df: pd.DataFrame, gap_threshold_minutes: float) -> np.ndarray:
+    if gap_threshold_minutes < 0:
+        raise ValueError("gap_threshold_minutes must be non-negative")
+    return compute_average_interarrival_minutes(inv_df) > gap_threshold_minutes
+
+
+def build_cold_exec_reference(
+    inv_df: pd.DataFrame,
+    run_df: pd.DataFrame,
+    gap_threshold_minutes: float,
+    exec_time_column: str = "Average",
+) -> tuple[np.ndarray, np.ndarray]:
+    cold_mask = compute_cold_function_mask(inv_df=inv_df, gap_threshold_minutes=gap_threshold_minutes)
+    cold_hashes = inv_df.loc[cold_mask, "HashFunction"].to_numpy(dtype=object, copy=True)
+    aligned_run_df = _reindex_by_hash(run_df, inv_df["HashFunction"].tolist())
+    cold_exec_times = extract_exec_time_distribution(
+        run_df=aligned_run_df,
+        hash_functions=cold_hashes,
+        exec_time_column=exec_time_column,
+    )
+    return cold_hashes, cold_exec_times
+
+
+def compute_cold_exec_wasserstein_distance(
+    reduced_run_df: pd.DataFrame,
+    cold_hashes: np.ndarray,
+    original_cold_exec_times: np.ndarray,
+    exec_time_column: str = "Average",
+) -> tuple[int, float]:
+    if len(original_cold_exec_times) == 0:
+        return 0, np.nan
+
+    retained_cold_exec_times = extract_exec_time_distribution(
+        run_df=reduced_run_df,
+        hash_functions=cold_hashes,
+        exec_time_column=exec_time_column,
+    )
+    if len(retained_cold_exec_times) == 0:
+        return 0, np.inf
+
+    return len(retained_cold_exec_times), compute_wasserstein_distance(
+        sample_values=retained_cold_exec_times,
+        original_values=original_cold_exec_times,
+    )
 
 
 def compute_round_robin_factor(real_nodes: int, max_nodes: int) -> float:
