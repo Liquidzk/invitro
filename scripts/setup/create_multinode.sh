@@ -40,7 +40,7 @@ then
 elif [ $CLUSTER_MODE = "firecracker_snapshots" ]
 then
     OPERATION_MODE="firecracker"
-    FIRECRACKER_SNAPSHOTS="-snapshots"
+    FIRECRACKER_SNAPSHOTS="-snapshots -upf"
 else
     echo "Unsupported cluster mode"
     exit 1
@@ -58,7 +58,7 @@ server_exec() {
 
 common_init() {
     internal_init() {
-        server_exec $1 "git clone --branch=$VHIVE_BRANCH $VHIVE_REPO"
+        server_exec $1 "git clone --branch=$VHIVE_BRANCH $VHIVE_REPO vhive"
 
         server_exec $1 "pushd ~/vhive/scripts > /dev/null && ./install_go.sh && source /etc/profile && go build -o setup_tool && ./setup_tool setup_node ${OPERATION_MODE} && popd > /dev/null"
         
@@ -112,6 +112,7 @@ function setup_master() {
 function setup_vhive_firecracker_daemon() {
     node=$1
 
+    "$DIR/sync_local_firecracker_bins.sh" $node
     server_exec $node 'cd vhive; source /etc/profile && go build'
     server_exec $node 'tmux new -s firecracker -d'
     server_exec $node 'tmux send -t firecracker "sudo PATH=$PATH /usr/local/bin/firecracker-containerd --config /etc/firecracker-containerd/config.toml 2>&1 | tee ~/firecracker_log.txt" ENTER'
@@ -191,6 +192,7 @@ function extend_CIDR() {
 
 function clone_loader() {
     server_exec $1 "git clone --depth=1 --branch=$LOADER_BRANCH $LOADER_REPO loader"
+    server_exec $1 "tmp=\$(mktemp) && jq '.K8sVersion = \"1.35.3\" | .CalicoVersion = \"3.31.5\"' ~/loader/config/kube.json > \$tmp && mv \$tmp ~/loader/config/kube.json"
     server_exec $1 'echo -en "\n\n" | sudo apt-get install -y python3-pip'
     # server_exec $1 'cd; cd loader; pip install -r config/requirements.txt --break-system-packages'
 }
