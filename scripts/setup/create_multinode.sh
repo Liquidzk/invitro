@@ -40,7 +40,7 @@ then
 elif [ $CLUSTER_MODE = "firecracker_snapshots" ]
 then
     OPERATION_MODE="firecracker"
-    FIRECRACKER_SNAPSHOTS="-snapshots -upf"
+    FIRECRACKER_SNAPSHOTS="-snapshots -upf -lazy"
 else
     echo "Unsupported cluster mode"
     exit 1
